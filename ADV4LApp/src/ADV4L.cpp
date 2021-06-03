@@ -49,9 +49,8 @@ ADV4L::ADV4L(const char* portName,
                priority, stackSize),
       V4LdeviceName(V4LdeviceName) {
 
-    //Constructor constructor constructor
+    //Constructor constructor constructor...
 }
-
 
 void ADV4L::run() {
     //Grab and publish images as they come in
@@ -107,8 +106,7 @@ asynStatus ADV4L::writeInt32(asynUser* pasynUser, epicsInt32 value) {
     return status;
 }
 
-
-/** Configuration command, called directly or from iocsh */
+// Configuration command, called directly or from iocsh
 extern "C" int ADV4LConfig(const char* const portName, const char* const V4LdeviceName,
                            int maxBuffers, int maxMemory, int priority, int stackSize) {
     new ADV4L(portName, V4LdeviceName,
@@ -125,9 +123,11 @@ static const iocshArg ADV4LConfigArg2 = {"maxBuffers", iocshArgInt};
 static const iocshArg ADV4LConfigArg3 = {"maxMemory", iocshArgInt};
 static const iocshArg ADV4LConfigArg4 = {"priority", iocshArgInt};
 static const iocshArg ADV4LConfigArg5 = {"stackSize", iocshArgInt};
+
 static const iocshArg* const ADV4LConfigArgs[] =
     { &ADV4LConfigArg0, &ADV4LConfigArg1, &ADV4LConfigArg2,
       &ADV4LConfigArg3, &ADV4LConfigArg4, &ADV4LConfigArg5};
+
 static const iocshFuncDef configADV4L = {"ADV4LConfig", 6, ADV4LConfigArgs};
 
 static void configADV4LCallFunc(const iocshArgBuf *args) {
@@ -135,7 +135,6 @@ static void configADV4LCallFunc(const iocshArgBuf *args) {
                       args[2].ival, args[3].ival,
                       args[4].ival, args[5].ival);
 }
-
 
 static void ADV4LRegister(void) {
     iocshRegister(&configADV4L, configADV4LCallFunc);
