@@ -12,12 +12,12 @@ ifeq (vxWorks,$(findstring vxWorks, $(T_A)))
 CODE_CXXFLAGS=
 endif
 
-INC += V4L.h
+INC += ADV4L.h
 
-LIBRARY_IOC = V4L
-LIB_SRCS += V4L.cpp
+LIBRARY_IOC = ADV4L
+LIB_SRCS += ADV4L.cpp
 
-DBD += V4LSupport.dbd
+DBD += ADV4LSupport.dbd
 
 include $(ADCORE)/ADApp/commonLibraryMakefile
 
