@@ -39,18 +39,18 @@ epicsEnvSet("EPICS_DB_INCLUDE_PATH", "$(ADCORE)/db")
 # allocates arrays of this size every time it needs a buffer larger than 16K.
 # Uncomment the following line to set it in the IOC.
 #epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", "10000000")
-epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", 90000000) #Used for Haavard's aravisGigE st.cmd file
+epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", 90000000)
 
 #Create a ADV4L driver
-ADV4L("$(PORT)", "/dev/video0")
+ADV4LConfig("$(PORT)", "/dev/video0")
 #Load it's database
-dbLoadRecords("$(ADV4L)/db/ADV4L.template","P=$(PREFIX),R=video0:,PORT=$(PORT),TIMEOUT=1,ADDR=0")
+dbLoadRecords("$(ADV4L)/db/ADV4L.template","P=$(PREFIX),R=device0:,PORT=$(PORT),TIMEOUT=1,ADDR=0")
 
 # Create a standard arrays plugin
-NDStdArraysConfigure("image", 5, 0, "$(PORT)", 0, 0)
+NDStdArraysConfigure("image0", 5, 0, "$(PORT)", 0, 0)
 # Allow for cameras up to 2048x2048x3 for RGB;
 # For more examples see ADSimDetector/iocs/simDetectorIOC/iocBoot/iocSimDetector/st_base.cmd
-dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image:,PORT=Image0,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=Int16,FTVL=SHORT,NELEMENTS=12582912")
+dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image0:,PORT=image0,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=Int16,FTVL=SHORT,NELEMENTS=12582912")
 
 # Load all other plugins using commonPlugins.cmd
 #< $(ADCORE)/iocBoot/commonPlugins.cmd
@@ -69,4 +69,4 @@ iocInit()
 #create_monitor_set("auto_settings.req", 30, "P=$(PREFIX)")
 
 # Set some defaults
-dbpf CAM1:video0:Acquire 0
+dbpf CAM1:device0:Acquire 0

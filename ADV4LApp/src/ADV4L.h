@@ -39,6 +39,9 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     //Start and stop acquisition of images
     virtual asynStatus start() { return asynSuccess; };
     virtual asynStatus stop() { return asynSuccess; };
+
+ private:
+    epicsThread pollingLoop;
 };
 
 

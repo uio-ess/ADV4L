@@ -39,6 +39,21 @@
 // Driver name for asyn trace prints
 static const char *driverName = "ADV4L";
 
+// Flag to say IOC is running
+static int iocRunning = 0;
+// Init hook that sets iocRunning flag
+static void setIocRunningFlag(initHookState state) {
+    switch(state) {
+        case initHookAfterIocRunning:
+            iocRunning = 1;
+            break;
+        default:
+            break;
+    }
+}
+
+
+// Constructor
 ADV4L::ADV4L(const char* portName,
              const char* V4LdeviceName,
              int maxBuffers, size_t maxMemory,
@@ -47,9 +62,19 @@ ADV4L::ADV4L(const char* portName,
                0, 0, // No interfaces beyond these set in ADDriver.cpp
                0, 1, // ASYN_CANBLOCK=0, ASYN_MULTIDEVICE=0, autoConnect=1
                priority, stackSize),
-      V4LdeviceName(V4LdeviceName) {
+      V4LdeviceName(V4LdeviceName),
+      pollingLoop(*this, "V4LPoll", stackSize, epicsThreadPriorityHigh){
 
-    //Constructor constructor constructor...
+    const char *functionName = "aravisCamera";
+    printf("%s:%s: *** constructor *** -- '%s' \n", driverName, functionName, portName);
+
+    //Create some parameters specific to ADV4L
+
+    //Set some default values
+
+    // Register the pollingLoop to start after iocInit
+    initHookRegister(setIocRunningFlag);
+    this->pollingLoop.start();
 }
 
 void ADV4L::run() {
