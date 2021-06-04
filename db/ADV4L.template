@@ -1,0 +1,37 @@
+# Database for the records specific to the aravis GigE driver
+# Macros:
+#% macro, P, Device Prefix
+#% macro, R, Device Suffix
+#% macro, PORT, Asyn Port name
+#% macro, TIMEOUT, Timeout, default 1
+#% macro, ADDR, Asyn Port address, default 0
+
+include "ADBase.template"
+
+# All tags starting with gdatag are DLS specific for GDA
+# % gdatag, template, ADV4L, $(PORT)_ADV4L, $(PORT) ADV4L class instance
+
+## ...
+
+# This isn't working -- don't know how to interface this parameter yet...
+# # % gdatag, pv, ro, $(PORT)_ADV4L, DEVICENAME_RBV, Readback for V4L device name
+#record(stringout, "$(P)$(R)DEVICENAME_RBV")
+#{
+#   field(DTYP, "asynOctetRead")
+#   field(INP,  "@asyn($(PORT),$(ADDR=0),$(TIMEOUT=1),$(IFMT=ASCII))ADV4L_DEVICENAME")
+#   field(SCAN, "Event")
+#   #Not sure what this means...
+#   info(autosaveFields, "DESC LLSV LOLO LOW LSV")
+#}
+
+## (Not much here yet!)
+## This file will be filled with *generic* V4L stuff
+## There may also be extra database templates for specific devices
+
+# unsupported fields
+record(bo, "$(P)$(R)ReverseX") {
+  field(DISA, "1")
+}
+record(bo, "$(P)$(R)ReverseY") {
+  field(DISA, "1")
+}
