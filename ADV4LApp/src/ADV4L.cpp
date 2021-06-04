@@ -66,11 +66,23 @@ ADV4L::ADV4L(const char* portName,
       pollingLoop(*this, "V4LPoll", stackSize, epicsThreadPriorityHigh){
 
     const char *functionName = "aravisCamera";
-    printf("%s:%s: *** constructor *** -- '%s' \n", driverName, functionName, portName);
-
+    /*
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+              "%s:%s: *** constructor *** -- '%s' \n", driverName, functionName, portName);
+    */
     //Create some parameters specific to ADV4L
-
+    createParam("ADV4L_DEVICENAME", asynParamOctet, &ADV4L_deviceName);
+    
     //Set some default values
+    setStringParam(ADV4L_deviceName, V4LdeviceName);
+    
+    // TODO: Put sensible things here; for now it is just copied from aravisGigE
+    // setStringParam(NDDriverVersion, DRIVER_VERSION);
+    // setStringParam(ADSDKVersion, ARAVIS_VERSION);
+    setIntegerParam(ADReverseX, 0);
+    setIntegerParam(ADReverseY, 0);
+    setIntegerParam(ADImageMode, ADImageContinuous);
+    setIntegerParam(ADNumImages, 100);
 
     // Register the pollingLoop to start after iocInit
     initHookRegister(setIocRunningFlag);
@@ -108,6 +120,25 @@ asynStatus ADV4L::writeInt32(asynUser* pasynUser, epicsInt32 value) {
             // This was a command to stop acquisition
             status = this->stop();
         }
+    }
+    else if (function == ADBinX || function == ADBinY ||
+             function == ADMinX || function == ADMinY || function == ADSizeX || function == ADSizeY ||
+             function == NDDataType || function == NDColorMode) {
+
+        asynPrint(pasynUser, ASYN_TRACE_ERROR,
+                  "%s:writeInt32 [FUNCTION IS TODO -- GEOM], status=%d function=%d %s, value=%d\n",
+                  driverName, status, function, reasonName, value);
+
+        status = asynSuccess;
+    }
+    else if (function == ADNumExposures) {
+        asynPrint(pasynUser, ASYN_TRACE_ERROR,
+                  "%s:writeInt32 [FUNCTION IS TODO -- EXPOSURES], status=%d function=%d %s, value=%d\n",
+                  driverName, status, function, reasonName, value);
+    }
+    else if (function < ADV4L_FIRSTPARAM) {
+        // Base class parameter
+        status = ADDriver::writeInt32(pasynUser, value);
     }
     else {
         status = asynError;

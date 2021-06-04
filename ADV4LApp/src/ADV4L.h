@@ -32,13 +32,17 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     // Recieves data from caput etc.
     virtual asynStatus writeInt32(asynUser *pasynUser, epicsInt32 value);
 
-    //Variables available from outside class
+    //Variables available from outside the class
     const char* const V4LdeviceName; // "/dev/video0" etc.
 
  protected:
     //Start and stop acquisition of images
     virtual asynStatus start() { return asynSuccess; };
     virtual asynStatus stop() { return asynSuccess; };
+
+    //Variables
+    int ADV4L_deviceName;
+#define ADV4L_FIRSTPARAM ADV4L_deviceName
 
  private:
     epicsThread pollingLoop;
