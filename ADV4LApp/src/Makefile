@@ -19,6 +19,11 @@ LIB_SRCS += ADV4L.cpp
 
 DBD += ADV4LSupport.dbd
 
+#USR_LIBS += v4l2
+# Probably an ugly hack, there must be a better way to do this
+# in this maze of make-macros masquerading as a build system...
+CODE_LDFLAGS += -lv4l2
+
 include $(ADCORE)/ADApp/commonLibraryMakefile
 
 #=============================

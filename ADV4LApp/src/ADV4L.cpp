@@ -17,15 +17,37 @@
 // Local includes
 #include "ADV4L.h"
 
-/* System includes */
+/* System includes */ //Maybe too many
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include<unistd.h>
+#include<unistd.h> //usleep()
 
-/* EPICS includes */
+//V4L2 includes
+#include <linux/videodev2.h>
+#include <libv4l2.h>
+
+#include <fcntl.h>
+#include <sys/mman.h>
+
+#define CLEAR(x) memset(&(x), 0, sizeof(x))
+
+static void xioctl(int fh, int request, void *arg) {
+    int r;
+
+    do {
+        r = v4l2_ioctl(fh, request, arg);
+    } while (r == -1 && ((errno == EINTR) || (errno == EAGAIN)));
+
+    if (r == -1) {
+        fprintf(stderr, "error %d, %s\\n", errno, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+}
+
+/* EPICS includes */ //Maybe too many
 #include <iocsh.h>
 #include <epicsExport.h>
 #include <epicsExit.h>
@@ -55,27 +77,27 @@ static void setIocRunningFlag(initHookState state) {
 
 // Constructor
 ADV4L::ADV4L(const char* portName,
-             const char* V4LdeviceName,
+             const char* V4L_deviceName,
              int maxBuffers, size_t maxMemory,
              int priority, int stackSize)
     : ADDriver(portName, 1, 0, maxBuffers, maxMemory,
                0, 0, // No interfaces beyond these set in ADDriver.cpp
                0, 1, // ASYN_CANBLOCK=0, ASYN_MULTIDEVICE=0, autoConnect=1
                priority, stackSize),
-      V4LdeviceName(V4LdeviceName),
+      V4L_deviceName(V4L_deviceName),
       pollingLoop(*this, "V4LPoll", stackSize, epicsThreadPriorityHigh){
 
-    const char *functionName = "aravisCamera";
+    const char* const functionName = "ADV4L";
     /*
     asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
               "%s:%s: *** constructor *** -- '%s' \n", driverName, functionName, portName);
     */
     //Create some parameters specific to ADV4L
-    createParam("ADV4L_DEVICENAME", asynParamOctet, &ADV4L_deviceName);
-    
+    createParam("ADV4L_DEVICENAME", asynParamOctet, &prop_V4L_deviceName);
+
     //Set some default values
-    setStringParam(ADV4L_deviceName, V4LdeviceName);
-    
+    setStringParam(prop_V4L_deviceName, V4L_deviceName);
+
     // TODO: Put sensible things here; for now it is just copied from aravisGigE
     // setStringParam(NDDriverVersion, DRIVER_VERSION);
     // setStringParam(ADSDKVersion, ARAVIS_VERSION);
@@ -89,12 +111,96 @@ ADV4L::ADV4L(const char* portName,
     this->pollingLoop.start();
 }
 
+asynStatus ADV4L::start() {
+    const char* const functionName = "start";
+
+    //TODO: Cleanup on failure
+
+
+    //Configure device
+    V4L_fd = v4l2_open(V4L_deviceName, O_RDWR | O_NONBLOCK, 0);
+    if (V4L_fd < 0) {
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                  "%s:%s: Cannot open V4L2 device\n", driverName, functionName);
+        return asynError;
+    }
+
+    CLEAR(V4L_fmt);
+    V4L_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    V4L_fmt.fmt.pix.width       = 640;
+    V4L_fmt.fmt.pix.height      = 480;
+    V4L_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
+    V4L_fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
+    xioctl(V4L_fd, VIDIOC_S_FMT, &V4L_fmt);
+    if (V4L_fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_RGB24) {
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                  "%s:%s: Libv4l didn't accept RGB24 format. Can't proceed\n",
+                  driverName, functionName);
+        return asynError;
+    }
+    if ((V4L_fmt.fmt.pix.width != 640) || (V4L_fmt.fmt.pix.height != 480)) {
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                  "%s:%s: Warning: driver is sending image at %dx%d\n",
+                  driverName, functionName, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height);
+    }
+
+    setIntegerParam(ADSizeX, V4L_fmt.fmt.pix.width);
+    setIntegerParam(ADSizeY, V4L_fmt.fmt.pix.height);
+    //TODO: Set the image type parameter in EPICS
+
+    //Map buffers
+    CLEAR(V4L_req);
+    V4L_req.count = 2;
+    V4L_req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    V4L_req.memory = V4L2_MEMORY_MMAP;
+    xioctl(V4L_fd, VIDIOC_REQBUFS, &V4L_req);
+
+    V4L_buffers = (V4L_buffer*) calloc(V4L_req.count, sizeof(*V4L_buffers));
+    struct v4l2_buffer buf;
+    for (size_t n_buffers = 0; n_buffers < V4L_req.count; ++n_buffers) {
+        CLEAR(buf);
+
+        buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory      = V4L2_MEMORY_MMAP;
+        buf.index       = n_buffers;
+
+        xioctl(V4L_fd, VIDIOC_QUERYBUF, &buf);
+
+        V4L_buffers[n_buffers].length = buf.length;
+        V4L_buffers[n_buffers].start = v4l2_mmap(NULL, buf.length,
+                                                 PROT_READ | PROT_WRITE, MAP_SHARED,
+                                                 V4L_fd, buf.m.offset);
+
+        if (MAP_FAILED == V4L_buffers[n_buffers].start) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                      "%s:%s: MMAP failed.\n",
+                      driverName, functionName);
+            return asynError;
+        }
+    }
+
+    V4L_run = true;
+    return asynSuccess;
+}
+asynStatus ADV4L::stop() {
+    return asynSuccess;
+}
+
 void ADV4L::run() {
     //Grab and publish images as they come in
 
+    const char* const functionName = "run";
+
     while(true) {
         //Grab image!
-        usleep(1000*25);
+        if (V4L_run) {
+
+        }
+        else {
+            usleep(1000*1000);
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                      "%s:%s: Grab!\n", driverName, functionName);
+        }
     }
 }
 
@@ -119,6 +225,10 @@ asynStatus ADV4L::writeInt32(asynUser* pasynUser, epicsInt32 value) {
         else {
             // This was a command to stop acquisition
             status = this->stop();
+        }
+
+        if (status != asynSuccess) {
+            setIntegerParam(ADAcquire,0);
         }
     }
     else if (function == ADBinX || function == ADBinY ||

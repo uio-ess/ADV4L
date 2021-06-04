@@ -16,10 +16,18 @@
 #include <ADDriver.h>
 #include <epicsThread.h>
 
+#include <linux/videodev2.h>
+#include <libv4l2.h>
+
+struct V4L_buffer {
+    void*  start;
+    size_t length;
+};
+
 class ADV4L : public ADDriver, epicsThreadRunable {
  public:
     ADV4L(const char* portName,
-          const char* V4LdeviceName,
+          const char* V4L_deviceName,
           int maxBuffers, size_t maxMemory,
           int priority, int stackSize);
 
@@ -33,16 +41,26 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     virtual asynStatus writeInt32(asynUser *pasynUser, epicsInt32 value);
 
     //Variables available from outside the class
-    const char* const V4LdeviceName; // "/dev/video0" etc.
+    const char* const V4L_deviceName; // "/dev/video0" etc.
 
  protected:
     //Start and stop acquisition of images
-    virtual asynStatus start() { return asynSuccess; };
-    virtual asynStatus stop() { return asynSuccess; };
+    virtual asynStatus start();
+    virtual asynStatus stop();
 
-    //Variables
-    int ADV4L_deviceName;
-#define ADV4L_FIRSTPARAM ADV4L_deviceName
+    // Variables //
+
+    //Property handles
+    int prop_V4L_deviceName;
+    #define ADV4L_FIRSTPARAM prop_V4L_deviceName
+
+    //V4L buffers etc.
+    bool                       V4L_run = false;
+
+    int                        V4L_fd = -1;
+    struct v4l2_format         V4L_fmt;
+    struct v4l2_requestbuffers V4L_req;
+    struct V4L_buffer*         V4L_buffers;
 
  private:
     epicsThread pollingLoop;
