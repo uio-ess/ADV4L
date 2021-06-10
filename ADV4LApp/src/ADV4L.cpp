@@ -76,22 +76,29 @@ static void setIocRunningFlag(initHookState state) {
 
 
 // Constructor
-ADV4L::ADV4L(const char* portName,
-             const char* V4L_deviceName,
+ADV4L::ADV4L(const char* portName_,
+             const char* V4L_deviceName_,
              int maxBuffers, size_t maxMemory,
              int priority, int stackSize)
-    : ADDriver(portName, 1, 0, maxBuffers, maxMemory,
+    : ADDriver(portName_, 1, 0, maxBuffers, maxMemory,
                0, 0, // No interfaces beyond these set in ADDriver.cpp
                0, 1, // ASYN_CANBLOCK=0, ASYN_MULTIDEVICE=0, autoConnect=1
                priority, stackSize),
-      V4L_deviceName(V4L_deviceName),
-      pollingLoop(*this, "V4LPoll", stackSize, epicsThreadPriorityHigh){
+      pollingLoop(*this, "V4LPoll", stackSize, epicsThreadPriorityHigh) {
 
     const char* const functionName = "ADV4L";
-    /*
-    asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-              "%s:%s: *** constructor *** -- '%s' \n", driverName, functionName, portName);
-    */
+
+    //The argument V4L_deviceName_ points to an ephermal char-array,
+    // we need to make a copy of it.
+    strncpy(this->V4L_deviceName, V4L_deviceName_, sizeof(this->V4L_deviceName)-1);
+    //Make sure it's zero-padded; it might crash later but that's OK.
+    this->V4L_deviceName[sizeof(this->V4L_deviceName)-1] = '\0';
+
+    //Cannot use asynPrint here
+    printf("%s:%s: portName='%s', V4L_deviceName='%s' \n",
+           driverName, functionName, portName, this->V4L_deviceName);
+    printf("this=%p\n", (void*)this);
+
     //Create some parameters specific to ADV4L
     createParam("ADV4L_DEVICENAME", asynParamOctet, &prop_V4L_deviceName);
 
@@ -106,6 +113,17 @@ ADV4L::ADV4L(const char* portName,
     setIntegerParam(ADImageMode, ADImageContinuous);
     setIntegerParam(ADNumImages, 100);
 
+    setIntegerParam(ADAcquire, 0);
+
+    //Safe defaults
+    setIntegerParam(ADBinX, 1);
+    setIntegerParam(ADBinY, 1);
+    setIntegerParam(NDColorMode, NDColorModeRGB1);
+    setIntegerParam(NDDataType,  NDUInt8);
+
+    //Safe nonsense
+    //setIntegerParam(ADTemperature, -1000);
+    
     // Register the pollingLoop to start after iocInit
     initHookRegister(setIocRunningFlag);
     this->pollingLoop.start();
@@ -113,6 +131,17 @@ ADV4L::ADV4L(const char* portName,
 
 asynStatus ADV4L::start() {
     const char* const functionName = "start";
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+              "%s:%s\n", driverName, functionName);
+
+    if(V4L_run) {
+        //Already running
+        return asynError;
+    }
+
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+              "%s:%s: Trying to open V4L2 device '%s'\n",
+              driverName, functionName, this->V4L_deviceName);
 
     //TODO: Cleanup on failure
 
@@ -121,15 +150,17 @@ asynStatus ADV4L::start() {
     V4L_fd = v4l2_open(V4L_deviceName, O_RDWR | O_NONBLOCK, 0);
     if (V4L_fd < 0) {
         asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-                  "%s:%s: Cannot open V4L2 device\n", driverName, functionName);
+                  "%s:%s: Cannot open V4L2 device '%s'\n",
+                  driverName, functionName, V4L_deviceName); 
         return asynError;
     }
 
     CLEAR(V4L_fmt);
+    //TODO: This should really be coming from EPICS
     V4L_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     V4L_fmt.fmt.pix.width       = 640;
     V4L_fmt.fmt.pix.height      = 480;
-    V4L_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
+    V4L_fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24; //Corresponds to NDColorModeRGB1 -- color,x,y
     V4L_fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
     xioctl(V4L_fd, VIDIOC_S_FMT, &V4L_fmt);
     if (V4L_fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_RGB24) {
@@ -147,16 +178,18 @@ asynStatus ADV4L::start() {
     setIntegerParam(ADSizeX, V4L_fmt.fmt.pix.width);
     setIntegerParam(ADSizeY, V4L_fmt.fmt.pix.height);
     //TODO: Set the image type parameter in EPICS
+    size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
 
     //Map buffers
     CLEAR(V4L_req);
-    V4L_req.count = 2;
-    V4L_req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    V4L_req.count  = nbuff;
+    V4L_req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     V4L_req.memory = V4L2_MEMORY_MMAP;
     xioctl(V4L_fd, VIDIOC_REQBUFS, &V4L_req);
 
     V4L_buffers = (V4L_buffer*) calloc(V4L_req.count, sizeof(*V4L_buffers));
     struct v4l2_buffer buf;
+
     for (size_t n_buffers = 0; n_buffers < V4L_req.count; ++n_buffers) {
         CLEAR(buf);
 
@@ -167,9 +200,9 @@ asynStatus ADV4L::start() {
         xioctl(V4L_fd, VIDIOC_QUERYBUF, &buf);
 
         V4L_buffers[n_buffers].length = buf.length;
-        V4L_buffers[n_buffers].start = v4l2_mmap(NULL, buf.length,
-                                                 PROT_READ | PROT_WRITE, MAP_SHARED,
-                                                 V4L_fd, buf.m.offset);
+        V4L_buffers[n_buffers].start  = v4l2_mmap(NULL, buf.length,
+                                                  PROT_READ | PROT_WRITE, MAP_SHARED,
+                                                  V4L_fd, buf.m.offset);
 
         if (MAP_FAILED == V4L_buffers[n_buffers].start) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
@@ -177,12 +210,65 @@ asynStatus ADV4L::start() {
                       driverName, functionName);
             return asynError;
         }
+
+        //Create the corresponding NDArray
+        pRaw[n_buffers] = this->pNDArrayPool->alloc(3,bufferDims, NDInt8, buf.length, V4L_buffers[n_buffers].start);
+        if (pRaw == NULL) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                      "%s:%s: Error allocating NDArray buffer",
+                      driverName, functionName);
+            return asynError;
+        }
+
     }
 
+    for (size_t i = 0; i < V4L_req.count; ++i) {
+        CLEAR(buf);
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = i;
+        xioctl(V4L_fd, VIDIOC_QBUF, &buf);
+    }
+
+    enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    xioctl(V4L_fd, VIDIOC_STREAMON, &type);
     V4L_run = true;
+
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+              "%s:%s complete\n", driverName, functionName);
+
     return asynSuccess;
 }
 asynStatus ADV4L::stop() {
+    const char* const functionName = "stop";
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+              "%s:%s\n", driverName, functionName);
+
+    if (V4L_run == false) {
+        //Not running so cannot stop
+        return asynError;
+    }
+
+    this->lock();
+
+    V4L_run = false;
+
+    enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    xioctl(V4L_fd, VIDIOC_STREAMOFF, &type);
+
+    for (size_t i = 0; i < V4L_req.count; ++i) {
+        v4l2_munmap(V4L_buffers[i].start, V4L_buffers[i].length);
+    }
+
+    v4l2_close(V4L_fd);
+    V4L_fd = -1;
+
+    
+    this->unlock();
+
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+              "%s:%s complete\n", driverName, functionName);
+
     return asynSuccess;
 }
 
@@ -191,20 +277,94 @@ void ADV4L::run() {
 
     const char* const functionName = "run";
 
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+              "%s:%s\n",
+              driverName, functionName);
+
+    int                r;
+    fd_set             fds;
+    struct timeval     tv;
+    struct v4l2_buffer buf;
+
     while(true) {
         //Grab image!
-        if (V4L_run) {
+        this->lock();
+        if (V4L_run == true) {
 
-        }
-        else {
-            usleep(1000*1000);
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                      "%s:%s: Grab!\n", driverName, functionName);
+                      "%s:%s: Start grab...\n", driverName, functionName);
+            //this->unlock();
+            //continue;
+
+            do {
+                FD_ZERO(&fds);
+                FD_SET(V4L_fd, &fds);
+
+                /* Timeout. */
+                tv.tv_sec  = 2;
+                tv.tv_usec = 0;
+
+                r = select(V4L_fd + 1, &fds, NULL, NULL, &tv);
+            } while ((r == -1 && (errno = EINTR)));
+            if (r == -1) {
+                asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                          "\n");
+                asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                          "%s:%s: SELECT failed.\n",
+                          driverName, functionName);
+                continue;
+            }
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "catch!\n");
+
+            int arrayCallbacks;
+            getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
+            int imageCounter;
+            getIntegerParam(NDArrayCounter, &imageCounter);
+
+            CLEAR(buf);
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+            xioctl(V4L_fd, VIDIOC_DQBUF, &buf);
+
+            if (pRaw[buf.index] == NULL) {
+                asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                          "%s:%s: where did this buffer come from?\n",
+                          driverName, functionName);
+                this->unlock();
+                continue;
+            }
+
+            //TODO:
+            //Set pRaw->uniqueId = imageCounter and pRaw=timeStamp
+            // There may be other attributes to be set as well...
+
+            if(arrayCallbacks) {
+                asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                          "%s:%s: Calling imageData callback\n",
+                          driverName, functionName);
+                doCallbacksGenericPointer(pRaw[buf.index], NDArrayData,0);
+            }
+
+            callParamCallbacks();
+
+            xioctl(V4L_fd, VIDIOC_QBUF, &buf);
+            this->unlock();
+        }
+        else { // Wait for :Acquire to become active
+            this->unlock();
+            usleep(1000*10); // Wait 0.01 sec (100 FPS) before retry
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                      "%s:%s: Waiting for acquire...\n", driverName, functionName);
         }
     }
 }
 
 asynStatus ADV4L::writeInt32(asynUser* pasynUser, epicsInt32 value) {
+
+    const char* const functionName = "writeInt32";
+    asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+              "%s:%s device='%s'\n", driverName, functionName, this->V4L_deviceName);
+
     int function = pasynUser->reason;
     asynStatus status = asynSuccess;
     epicsInt32 rbv;
@@ -275,6 +435,7 @@ asynStatus ADV4L::writeInt32(asynUser* pasynUser, epicsInt32 value) {
 // Configuration command, called directly or from iocsh
 extern "C" int ADV4LConfig(const char* const portName, const char* const V4LdeviceName,
                            int maxBuffers, int maxMemory, int priority, int stackSize) {
+
     new ADV4L(portName, V4LdeviceName,
               (maxBuffers < 0) ? 0 : maxBuffers,
               (maxMemory < 0) ? 0 : maxMemory,

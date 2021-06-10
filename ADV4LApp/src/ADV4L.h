@@ -26,11 +26,12 @@ struct V4L_buffer {
 
 class ADV4L : public ADDriver, epicsThreadRunable {
  public:
-    ADV4L(const char* portName,
-          const char* V4L_deviceName,
+    ADV4L(const char* portName_,
+          const char* V4L_deviceName_,
           int maxBuffers, size_t maxMemory,
           int priority, int stackSize);
 
+    ADV4L();
     //From epicsThreadRunnable
     // This method grabs images and publishes them
     // as they become available
@@ -41,7 +42,6 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     virtual asynStatus writeInt32(asynUser *pasynUser, epicsInt32 value);
 
     //Variables available from outside the class
-    const char* const V4L_deviceName; // "/dev/video0" etc.
 
  protected:
     //Start and stop acquisition of images
@@ -49,6 +49,8 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     virtual asynStatus stop();
 
     // Variables //
+
+    char V4L_deviceName[128]; // "/dev/video0" etc.
 
     //Property handles
     int prop_V4L_deviceName;
@@ -60,7 +62,10 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     int                        V4L_fd = -1;
     struct v4l2_format         V4L_fmt;
     struct v4l2_requestbuffers V4L_req;
+
+    static const int           nbuff = 2;
     struct V4L_buffer*         V4L_buffers;
+    NDArray*                   pRaw[nbuff];
 
  private:
     epicsThread pollingLoop;
