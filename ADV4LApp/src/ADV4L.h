@@ -15,6 +15,8 @@
 
 #include <ADDriver.h>
 #include <epicsThread.h>
+//#include <epicsMutex.h>
+#include <epicsEvent.h>
 
 #include <linux/videodev2.h>
 #include <libv4l2.h>
@@ -57,7 +59,9 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     #define ADV4L_FIRSTPARAM prop_V4L_deviceName
 
     //V4L buffers etc.
-    bool                       V4L_run = false;
+    //epicsMutexId               V4L_lock;
+    epicsEvent*                V4L_semaphore;
+    bool                       V4L_running = false;
 
     int                        V4L_fd = -1;
     struct v4l2_format         V4L_fmt;

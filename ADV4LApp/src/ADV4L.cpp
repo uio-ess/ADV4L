@@ -17,13 +17,15 @@
 // Local includes
 #include "ADV4L.h"
 
-/* System includes */ //Maybe too many
+// System includes -- Maybe too many?
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include<unistd.h> //usleep()
+#include <unistd.h>  //usleep()
+
+#include <stdexcept> //std::runtime_error
 
 //V4L2 includes
 #include <linux/videodev2.h>
@@ -123,7 +125,14 @@ ADV4L::ADV4L(const char* portName_,
 
     //Safe nonsense
     //setIntegerParam(ADTemperature, -1000);
-    
+
+    //Create and set the semaphore that used for protecting the image grabbing
+    // and the V4L config/teardown.
+    // It starts as "empty", and ::start() will 'fill' the semaphore,
+    // which kicks off the polling loop.
+    V4L_semaphore = new epicsEvent(epicsEventEmpty);
+    V4L_running = false;
+
     // Register the pollingLoop to start after iocInit
     initHookRegister(setIocRunningFlag);
     this->pollingLoop.start();
@@ -134,8 +143,10 @@ asynStatus ADV4L::start() {
     asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
               "%s:%s\n", driverName, functionName);
 
-    if(V4L_run) {
+    if(V4L_running) {
         //Already running
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                  "%s:%s Cannot start while already running\n", driverName, functionName);
         return asynError;
     }
 
@@ -232,10 +243,14 @@ asynStatus ADV4L::start() {
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     xioctl(V4L_fd, VIDIOC_STREAMON, &type);
-    V4L_run = true;
 
     asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
               "%s:%s complete\n", driverName, functionName);
+
+    //Go!
+    V4L_running = true;
+    //epicsMutexUnlock(V4L_lock);
+    V4L_semaphore->signal();
 
     return asynSuccess;
 }
@@ -244,14 +259,19 @@ asynStatus ADV4L::stop() {
     asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
               "%s:%s\n", driverName, functionName);
 
-    if (V4L_run == false) {
+    if (V4L_running == false) {
         //Not running so cannot stop
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                  "%s:%s Cannot stop while not running\n", driverName, functionName);
+
         return asynError;
     }
 
-    this->lock();
+    //this->lock();
 
-    V4L_run = false;
+    V4L_running = false;
+    //epicsMutexLock(V4L_lock);
+    V4L_semaphore->wait();
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     xioctl(V4L_fd, VIDIOC_STREAMOFF, &type);
@@ -263,8 +283,7 @@ asynStatus ADV4L::stop() {
     v4l2_close(V4L_fd);
     V4L_fd = -1;
 
-    
-    this->unlock();
+    //this->unlock();
 
     asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
               "%s:%s complete\n", driverName, functionName);
@@ -288,13 +307,13 @@ void ADV4L::run() {
 
     while(true) {
         //Grab image!
-        this->lock();
-        if (V4L_run == true) {
+        //this->lock();
+        //epicsMutexLock(V4L_lock);
+        V4L_semaphore->wait();
+        if (V4L_running == true) {
 
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
                       "%s:%s: Start grab...\n", driverName, functionName);
-            //this->unlock();
-            //continue;
 
             do {
                 FD_ZERO(&fds);
@@ -312,6 +331,8 @@ void ADV4L::run() {
                 asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                           "%s:%s: SELECT failed.\n",
                           driverName, functionName);
+                //epicsMutexUnlock(V4L_lock);
+                V4L_semaphore->signal();
                 continue;
             }
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "catch!\n");
@@ -330,7 +351,9 @@ void ADV4L::run() {
                 asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                           "%s:%s: where did this buffer come from?\n",
                           driverName, functionName);
-                this->unlock();
+                //                this->unlock();
+                //epicsMutexUnlock(V4L_lock);
+                V4L_semaphore->signal();
                 continue;
             }
 
@@ -348,10 +371,14 @@ void ADV4L::run() {
             callParamCallbacks();
 
             xioctl(V4L_fd, VIDIOC_QBUF, &buf);
-            this->unlock();
+            //this->unlock();
+            //epicsMutexUnlock(V4L_lock);
+            V4L_semaphore->signal();
         }
         else { // Wait for :Acquire to become active
-            this->unlock();
+            //this->unlock();
+            //epicsMutexUnlock(V4L_lock);
+            V4L_semaphore->signal();
             usleep(1000*10); // Wait 0.01 sec (100 FPS) before retry
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
                       "%s:%s: Waiting for acquire...\n", driverName, functionName);
