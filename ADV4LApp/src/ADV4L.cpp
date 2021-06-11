@@ -166,7 +166,7 @@ asynStatus ADV4L::start() {
     if (V4L_fd < 0) {
         asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                   "%s:%s: Cannot open V4L2 device '%s'\n",
-                  driverName, functionName, V4L_deviceName); 
+                  driverName, functionName, V4L_deviceName);
         return asynError;
     }
 
@@ -227,7 +227,7 @@ asynStatus ADV4L::start() {
         }
 
         //Create the corresponding NDArray
-        pRaw[n_buffers] = this->pNDArrayPool->alloc(3,bufferDims, NDInt8, buf.length, V4L_buffers[n_buffers].start);
+        pRaw[n_buffers] = this->pNDArrayPool->alloc(3,bufferDims, NDUInt8, buf.length, V4L_buffers[n_buffers].start);
         if (pRaw == NULL) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                       "%s:%s: Error allocating NDArray buffer",
@@ -279,8 +279,10 @@ asynStatus ADV4L::stop() {
     xioctl(V4L_fd, VIDIOC_STREAMOFF, &type);
 
     for (size_t i = 0; i < V4L_req.count; ++i) {
+        pRaw[i]->release();
         v4l2_munmap(V4L_buffers[i].start, V4L_buffers[i].length);
     }
+    free(V4L_buffers);
 
     v4l2_close(V4L_fd);
     V4L_fd = -1;
@@ -342,6 +344,8 @@ void ADV4L::run() {
         }
         asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "catch!\n");
 
+        //this->lock();
+
         int arrayCallbacks;
         getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
         int imageCounter;
@@ -360,19 +364,38 @@ void ADV4L::run() {
             continue;
         }
 
+        this->pArrays[0] = pRaw[buf.index];
+
+        //size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
+        //this->pArrays[0] = pNDArrayPool->alloc(3,bufferDims,NDUInt8,buf.length,NULL);
+        //memcpy(this->pArrays[0]->pData, V4L_buffers[buf.index].start, buf.length);
+
         //TODO:
         //Set pRaw->uniqueId = imageCounter and pRaw=timeStamp
         // There may be other attributes to be set as well...
+
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                  "%s:%s: Data example: %02X:%02X:%02X\n",
+                  driverName, functionName,
+                  ((uint8_t*)(V4L_buffers[buf.index].start))[0],
+                  ((uint8_t*)(V4L_buffers[buf.index].start))[1],
+                  ((uint8_t*)(V4L_buffers[buf.index].start))[2]);
 
         if(arrayCallbacks) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
                       "%s:%s: Calling imageData callback\n",
                       driverName, functionName);
+
+            //doCallbacksGenericPointer will always return asynSuccess
             doCallbacksGenericPointer(pRaw[buf.index], NDArrayData,0);
+            //doCallbacksGenericPointer(this->pArrays[0],NDArrayData,0);
         }
 
         callParamCallbacks();
 
+        //this->unlock();
+
+        //this->pArrays[0]->release();
         xioctl(V4L_fd, VIDIOC_QBUF, &buf);
 
         V4L_semaphore->signal();

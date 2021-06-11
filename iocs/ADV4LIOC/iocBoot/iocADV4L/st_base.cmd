@@ -3,7 +3,6 @@
 errlogInit(20000)
 
 dbLoadDatabase("$(TOP)/dbd/ADV4LApp.dbd")
-#simDetectorApp_registerRecordDeviceDriver(pdbbase)
 ADV4LApp_registerRecordDeviceDriver(pdbbase)
 
 # Prefix for all records
@@ -39,7 +38,9 @@ epicsEnvSet("EPICS_DB_INCLUDE_PATH", "$(ADCORE)/db")
 # allocates arrays of this size every time it needs a buffer larger than 16K.
 # Uncomment the following line to set it in the IOC.
 #epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", "10000000")
-epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", 90000000)
+#epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", 90000000)
+#epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", 921600)
+epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", 1000000)
 
 #Create a ADV4L driver
 ADV4LConfig("$(PORT)", "/dev/video0")
@@ -50,14 +51,17 @@ dbLoadRecords("$(ADV4L)/db/ADV4L.template","P=$(PREFIX),R=device0:,PORT=$(PORT),
 NDStdArraysConfigure("image0", 5, 0, "$(PORT)", 0, 0)
 # Allow for cameras up to 2048x2048x3 for RGB;
 # For more examples see ADSimDetector/iocs/simDetectorIOC/iocBoot/iocSimDetector/st_base.cmd
-dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image0:,PORT=image0,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=Int16,FTVL=SHORT,NELEMENTS=12582912")
+dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image0:,PORT=image0,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=UInt8,FTVL=SHORT,NELEMENTS=921600") #NELEMENTS=12582912
 
 # Load all other plugins using commonPlugins.cmd
 #< $(ADCORE)/iocBoot/commonPlugins.cmd
 #set_requestfile_path("$(ADV4L)/ADV4LApp/Db")
 
 #asynSetTraceIOMask("$(PORT)",0,2)
-#asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW)
+
+#asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
+asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING)
+
 #asynSetTraceIOMask("FileNetCDF",0,2)
 #asynSetTraceMask("FileNetCDF",0,255)
 #asynSetTraceMask("FileNexus",0,255)
@@ -70,3 +74,5 @@ iocInit()
 
 # Set some defaults
 dbpf CAM1:device0:Acquire 0
+dbpf CAM1:image0:EnableCallbacks 1
+dbpf CAM1:image0:ArrayCallbacks 1
