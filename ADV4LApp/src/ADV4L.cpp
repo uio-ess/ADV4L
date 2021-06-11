@@ -249,7 +249,6 @@ asynStatus ADV4L::start() {
 
     //Go!
     V4L_running = true;
-    //epicsMutexUnlock(V4L_lock);
     V4L_semaphore->signal();
 
     return asynSuccess;
@@ -267,11 +266,10 @@ asynStatus ADV4L::stop() {
         return asynError;
     }
 
-    //this->lock();
 
-    V4L_running = false;
-    //epicsMutexLock(V4L_lock);
+
     V4L_semaphore->wait();
+    V4L_running = false;
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     xioctl(V4L_fd, VIDIOC_STREAMOFF, &type);
@@ -282,8 +280,6 @@ asynStatus ADV4L::stop() {
 
     v4l2_close(V4L_fd);
     V4L_fd = -1;
-
-    //this->unlock();
 
     asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
               "%s:%s complete\n", driverName, functionName);
@@ -306,83 +302,76 @@ void ADV4L::run() {
     struct v4l2_buffer buf;
 
     while(true) {
-        //Grab image!
-        //this->lock();
-        //epicsMutexLock(V4L_lock);
+        // Without the usleep, the change of acquire from 1 to 0
+        // takes several seconds before it acquires the semaphore;
+        // this thread will almost always get it first.
+        usleep(1);
         V4L_semaphore->wait();
-        if (V4L_running == true) {
 
-            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                      "%s:%s: Start grab...\n", driverName, functionName);
-
-            do {
-                FD_ZERO(&fds);
-                FD_SET(V4L_fd, &fds);
-
-                /* Timeout. */
-                tv.tv_sec  = 2;
-                tv.tv_usec = 0;
-
-                r = select(V4L_fd + 1, &fds, NULL, NULL, &tv);
-            } while ((r == -1 && (errno = EINTR)));
-            if (r == -1) {
-                asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                          "\n");
-                asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-                          "%s:%s: SELECT failed.\n",
-                          driverName, functionName);
-                //epicsMutexUnlock(V4L_lock);
-                V4L_semaphore->signal();
-                continue;
-            }
-            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "catch!\n");
-
-            int arrayCallbacks;
-            getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
-            int imageCounter;
-            getIntegerParam(NDArrayCounter, &imageCounter);
-
-            CLEAR(buf);
-            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            buf.memory = V4L2_MEMORY_MMAP;
-            xioctl(V4L_fd, VIDIOC_DQBUF, &buf);
-
-            if (pRaw[buf.index] == NULL) {
-                asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-                          "%s:%s: where did this buffer come from?\n",
-                          driverName, functionName);
-                //                this->unlock();
-                //epicsMutexUnlock(V4L_lock);
-                V4L_semaphore->signal();
-                continue;
-            }
-
-            //TODO:
-            //Set pRaw->uniqueId = imageCounter and pRaw=timeStamp
-            // There may be other attributes to be set as well...
-
-            if(arrayCallbacks) {
-                asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                          "%s:%s: Calling imageData callback\n",
-                          driverName, functionName);
-                doCallbacksGenericPointer(pRaw[buf.index], NDArrayData,0);
-            }
-
-            callParamCallbacks();
-
-            xioctl(V4L_fd, VIDIOC_QBUF, &buf);
-            //this->unlock();
-            //epicsMutexUnlock(V4L_lock);
+        if (!V4L_running) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_WARNING,
+                      "%s:%s: Released but not running?...\n", driverName, functionName);
             V4L_semaphore->signal();
+            continue;
         }
-        else { // Wait for :Acquire to become active
-            //this->unlock();
-            //epicsMutexUnlock(V4L_lock);
+
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                  "%s:%s: Start grab...\n", driverName, functionName);
+
+        do {
+            FD_ZERO(&fds);
+            FD_SET(V4L_fd, &fds);
+
+            /* Timeout. */
+            tv.tv_sec  = 2;
+            tv.tv_usec = 0;
+
+            r = select(V4L_fd + 1, &fds, NULL, NULL, &tv);
+        } while ((r == -1 && (errno = EINTR)));
+        if (r == -1) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "\n");
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                      "%s:%s: SELECT failed.\n",
+                      driverName, functionName);
             V4L_semaphore->signal();
-            usleep(1000*10); // Wait 0.01 sec (100 FPS) before retry
-            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                      "%s:%s: Waiting for acquire...\n", driverName, functionName);
+            continue;
         }
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "catch!\n");
+
+        int arrayCallbacks;
+        getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
+        int imageCounter;
+        getIntegerParam(NDArrayCounter, &imageCounter);
+
+        CLEAR(buf);
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        xioctl(V4L_fd, VIDIOC_DQBUF, &buf);
+
+        if (pRaw[buf.index] == NULL) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                      "%s:%s: where did this buffer come from?\n",
+                      driverName, functionName);
+            V4L_semaphore->signal();
+            continue;
+        }
+
+        //TODO:
+        //Set pRaw->uniqueId = imageCounter and pRaw=timeStamp
+        // There may be other attributes to be set as well...
+
+        if(arrayCallbacks) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                      "%s:%s: Calling imageData callback\n",
+                      driverName, functionName);
+            doCallbacksGenericPointer(pRaw[buf.index], NDArrayData,0);
+        }
+
+        callParamCallbacks();
+
+        xioctl(V4L_fd, VIDIOC_QBUF, &buf);
+
+        V4L_semaphore->signal();
     }
 }
 
