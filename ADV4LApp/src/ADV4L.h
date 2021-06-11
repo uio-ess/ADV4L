@@ -32,7 +32,8 @@ class ADV4L : public ADDriver, epicsThreadRunable {
           int maxBuffers, size_t maxMemory,
           int priority, int stackSize);
 
-    ADV4L();
+    ~ADV4L();
+
     //From epicsThreadRunnable
     // This method grabs images and publishes them
     // as they become available

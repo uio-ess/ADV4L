@@ -138,6 +138,10 @@ ADV4L::ADV4L(const char* portName_,
     this->pollingLoop.start();
 }
 
+ADV4L::~ADV4L() {
+    delete V4L_semaphore;
+}
+
 asynStatus ADV4L::start() {
     const char* const functionName = "start";
     asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
