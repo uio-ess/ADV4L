@@ -6,15 +6,17 @@ dbLoadDatabase("$(TOP)/dbd/ADV4LApp.dbd")
 ADV4LApp_registerRecordDeviceDriver(pdbbase)
 
 # Prefix for all records
-epicsEnvSet("PREFIX", "CAM1:")
+epicsEnvSet("PREFIX", "cam1:")
 # The port name for the detector
 epicsEnvSet("PORT",   "CAM1")
 # The queue size for all plugins
 epicsEnvSet("QSIZE",  "20")
 # The maximum image width; used to set the maximum size for this driver and for row profiles in the NDPluginStats plugin
-epicsEnvSet("XSIZE",  "1024")
+#epicsEnvSet("XSIZE",  "1024")
+epicsEnvSet("XSIZE",  "640")
 # The maximum image height; used to set the maximum size for this driver and for column profiles in the NDPluginStats plugin
-epicsEnvSet("YSIZE",  "1024")
+#epicsEnvSet("YSIZE",  "1024")
+epicsEnvSet("YSIZE",  "480")
 # The maximum number of time series points in the NDPluginStats plugin
 epicsEnvSet("NCHANS", "2048")
 # The maximum number of frames buffered in the NDPluginCircularBuff plugin
@@ -45,13 +47,13 @@ epicsEnvSet("EPICS_CA_MAX_ARRAY_BYTES", 1000000)
 #Create a ADV4L driver
 ADV4LConfig("$(PORT)", "/dev/video0")
 #Load it's database
-dbLoadRecords("$(ADV4L)/db/ADV4L.template","P=$(PREFIX),R=device0:,PORT=$(PORT),TIMEOUT=1,ADDR=0")
+dbLoadRecords("$(ADV4L)/db/ADV4L.template","P=$(PREFIX),R=det1:,PORT=$(PORT),TIMEOUT=1,ADDR=0")
 
 # Create a standard arrays plugin
-NDStdArraysConfigure("image0", 5, 0, "$(PORT)", 0, 0)
-# Allow for cameras up to 2048x2048x3 for RGB;
+NDStdArraysConfigure("Image1", 5, 0, "$(PORT)", 0, 0)
+# Allow for cameras up to 640x480x3 for RGB;
 # For more examples see ADSimDetector/iocs/simDetectorIOC/iocBoot/iocSimDetector/st_base.cmd
-dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image0:,PORT=image0,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=UInt8,FTVL=SHORT,NELEMENTS=921600") #NELEMENTS=12582912
+dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image1:,PORT=Image1,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=Int8,FTVL=SHORT,NELEMENTS=921600") #NELEMENTS=12582912
 
 # Load all other plugins using commonPlugins.cmd
 #< $(ADCORE)/iocBoot/commonPlugins.cmd
@@ -59,8 +61,8 @@ dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image0:,PORT=i
 
 #asynSetTraceIOMask("$(PORT)",0,2)
 
-#asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
-asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING)
+asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
+#asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING)
 
 #asynSetTraceIOMask("FileNetCDF",0,2)
 #asynSetTraceMask("FileNetCDF",0,255)
@@ -73,6 +75,8 @@ iocInit()
 #create_monitor_set("auto_settings.req", 30, "P=$(PREFIX)")
 
 # Set some defaults
-dbpf CAM1:device0:Acquire 0
-dbpf CAM1:image0:EnableCallbacks 1
-dbpf CAM1:image0:ArrayCallbacks 1
+#dbpf CAM1:det1:Acquire 0
+dbpf cam1:det1:EnableCallbacks 1
+dbpf cam1:det1:ArrayCallbacks 1
+dbpf cam1:image1:EnableCallbacks 1
+dbpf cam1:image1:ArrayCallbacks 1

@@ -99,7 +99,6 @@ ADV4L::ADV4L(const char* portName_,
     //Cannot use asynPrint here
     printf("%s:%s: portName='%s', V4L_deviceName='%s' \n",
            driverName, functionName, portName, this->V4L_deviceName);
-    printf("this=%p\n", (void*)this);
 
     //Create some parameters specific to ADV4L
     createParam("ADV4L_DEVICENAME", asynParamOctet, &prop_V4L_deviceName);
@@ -121,7 +120,7 @@ ADV4L::ADV4L(const char* portName_,
     setIntegerParam(ADBinX, 1);
     setIntegerParam(ADBinY, 1);
     setIntegerParam(NDColorMode, NDColorModeRGB1);
-    setIntegerParam(NDDataType,  NDUInt8);
+    setIntegerParam(NDDataType,  NDInt8);
 
     //Safe nonsense
     //setIntegerParam(ADTemperature, -1000);
