@@ -53,13 +53,11 @@ dbLoadRecords("$(ADV4L)/db/ADV4L.template","P=$(PREFIX),R=det1:,PORT=$(PORT),TIM
 NDStdArraysConfigure("Image1", 5, 0, "$(PORT)", 0, 0)
 # Allow for cameras up to 640x480x3 for RGB;
 # For more examples see ADSimDetector/iocs/simDetectorIOC/iocBoot/iocSimDetector/st_base.cmd
-dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image1:,PORT=Image1,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=Int8,FTVL=SHORT,NELEMENTS=921600") #NELEMENTS=12582912
+dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image1:,PORT=Image1,ADDR=0,TIMEOUT=1,NDARRAY_PORT=$(PORT),TYPE=Int8,FTVL=CHAR,NELEMENTS=921600") #NELEMENTS=12582912
 
 # Load all other plugins using commonPlugins.cmd
 #< $(ADCORE)/iocBoot/commonPlugins.cmd
 #set_requestfile_path("$(ADV4L)/ADV4LApp/Db")
-
-#asynSetTraceIOMask("$(PORT)",0,2)
 
 asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
 #asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING)
@@ -68,6 +66,8 @@ asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW
 #asynSetTraceMask("FileNetCDF",0,255)
 #asynSetTraceMask("FileNexus",0,255)
 #asynSetTraceMask("SIM2",0,255)
+
+asynSetTraceMask("Image1",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
 
 iocInit()
 
@@ -80,3 +80,5 @@ dbpf cam1:det1:EnableCallbacks 1
 dbpf cam1:det1:ArrayCallbacks 1
 dbpf cam1:image1:EnableCallbacks 1
 dbpf cam1:image1:ArrayCallbacks 1
+
+dbl

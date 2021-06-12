@@ -122,8 +122,17 @@ ADV4L::ADV4L(const char* portName_,
     setIntegerParam(NDColorMode, NDColorModeRGB1);
     setIntegerParam(NDDataType,  NDInt8);
 
-    //Safe nonsense
-    //setIntegerParam(ADTemperature, -1000);
+    setIntegerParam(ADMinX, 0);
+    setIntegerParam(ADMinY, 0);
+    setIntegerParam(ADSizeX, 640);
+    setIntegerParam(ADSizeY, 480);
+
+    setIntegerParam(ADMaxSizeX, 640);
+    setIntegerParam(ADMaxSizeY, 480);
+
+    setIntegerParam(NDArraySize, 640*480*3);
+    setIntegerParam(NDArraySizeX, 640);
+    setIntegerParam(NDArraySizeY, 480);
 
     //Flags and semaphores for active acquisition
     // To start/stop the acquisition thread, first flip the _running flag,
@@ -133,6 +142,8 @@ ADV4L::ADV4L(const char* portName_,
     V4L_running = false;
     V4L_started = new epicsEvent(epicsEventEmpty);
     V4L_stopped = new epicsEvent(epicsEventEmpty);
+
+    setIntegerParam(ADStatus, ADStatusIdle);
 
     // Register the pollingLoop to start after iocInit
     initHookRegister(setIocRunningFlag);
@@ -155,6 +166,9 @@ asynStatus ADV4L::start() {
                   "%s:%s Cannot start while already running\n", driverName, functionName);
         return asynError;
     }
+
+    setIntegerParam(ADNumImagesCounter, 0);
+    setIntegerParam(ADStatus, ADStatusAcquire);
 
     asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
               "%s:%s: Trying to open V4L2 device '%s'\n",
@@ -282,6 +296,7 @@ asynStatus ADV4L::stop() {
     V4L_stopped->wait();
     //OK, we have stopped successfully
     this->lock();
+    setIntegerParam(ADStatus, ADStatusIdle);
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     xioctl(V4L_fd, VIDIOC_STREAMOFF, &type);
@@ -315,7 +330,6 @@ void ADV4L::run() {
     struct timeval     tv;
     struct v4l2_buffer buf;
 
-    //epicsTimeStamp now;
     this->lock();
 
     while(true) {
@@ -359,10 +373,16 @@ void ADV4L::run() {
         }
         asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "catch!\n");
 
-        int arrayCallbacks;
-        getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
-        int imageCounter;
-        getIntegerParam(NDArrayCounter, &imageCounter);
+        int arrayCallbacks, imageCounter, numImages, numImagesCounter;
+        getIntegerParam(NDArrayCallbacks,   &arrayCallbacks);
+        getIntegerParam(NDArrayCounter,     &imageCounter);
+        getIntegerParam(ADNumImages,        &numImages);
+        getIntegerParam(ADNumImagesCounter, &numImagesCounter);
+
+        imageCounter++;
+        numImagesCounter++;
+        setIntegerParam(NDArrayCounter, imageCounter);
+        setIntegerParam(ADNumImagesCounter, numImagesCounter);
 
         CLEAR(buf);
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -376,12 +396,25 @@ void ADV4L::run() {
                   ((uint8_t*)(V4L_buffers[buf.index].start))[1],
                   ((uint8_t*)(V4L_buffers[buf.index].start))[2]);
 
-        //epicsTimeGetCurrent(&now);
-
         size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
         NDArray* pRaw = pNDArrayPool->alloc(3,bufferDims,NDUInt8,buf.length,NULL);
         memcpy(pRaw->pData,V4L_buffers[buf.index].start, buf.length);
-        //NDArray* pRaw = pNDArrayPool->alloc(3,bufferDims,NDUInt8,buf.length,V4L_buffers[buf.index].start);
+
+        pRaw->uniqueId = imageCounter;
+        pRaw->timeStamp = buf.timestamp.tv_sec + buf.timestamp.tv_usec*1e6;
+        updateTimeStamp(&pRaw->epicsTS);
+        pRaw->dataType = NDInt8;
+
+        pRaw->ndims = 3;
+        pRaw->dims[0].size = 3;
+        pRaw->dims[0].offset = 0;
+        pRaw->dims[0].binning = 1;
+        pRaw->dims[1].size =  V4L_fmt.fmt.pix.width;
+        pRaw->dims[1].offset = 0;
+        pRaw->dims[1].binning = 1;
+        pRaw->dims[2].size =  V4L_fmt.fmt.pix.height;
+        pRaw->dims[2].offset = 0;
+        pRaw->dims[2].binning = 1;
 
         asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
                   "%s:%s: Data example (pRaw):        %02X:%02X:%02X\n",
@@ -400,7 +433,7 @@ void ADV4L::run() {
         pRaw->initDimension(&dimsOut[2],V4L_fmt.fmt.pix.height);
         int status = this->pNDArrayPool->convert(pRaw,
                                                  &this->pArrays[0],
-                                                 NDUInt8,
+                                                 NDInt8,
                                                  dimsOut);
         if (status) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
