@@ -126,12 +126,14 @@ ADV4L::ADV4L(const char* portName_,
     //Safe nonsense
     //setIntegerParam(ADTemperature, -1000);
 
-    //Create and set the semaphore that used for protecting the image grabbing
-    // and the V4L config/teardown.
-    // It starts as "empty", and ::start() will 'fill' the semaphore,
-    // which kicks off the polling loop.
-    V4L_semaphore = new epicsEvent(epicsEventEmpty);
+    //Flags and semaphores for active acquisition
+    // To start/stop the acquisition thread, first flip the _running flag,
+    // and then either (a) allocate buffers etc. then set the _started semaphore to kick of the acquisition thread,
+    // or (b) wait for the acquisiton thread to see that the running flag is false and issue the _stopped semaphore,
+    // then tear down.
     V4L_running = false;
+    V4L_started = new epicsEvent(epicsEventEmpty);
+    V4L_stopped = new epicsEvent(epicsEventEmpty);
 
     // Register the pollingLoop to start after iocInit
     initHookRegister(setIocRunningFlag);
@@ -139,7 +141,8 @@ ADV4L::ADV4L(const char* portName_,
 }
 
 ADV4L::~ADV4L() {
-    delete V4L_semaphore;
+    delete V4L_started;
+    delete V4L_stopped;
 }
 
 asynStatus ADV4L::start() {
@@ -202,10 +205,10 @@ asynStatus ADV4L::start() {
     V4L_req.memory = V4L2_MEMORY_MMAP;
     xioctl(V4L_fd, VIDIOC_REQBUFS, &V4L_req);
 
-    V4L_buffers = (V4L_buffer*) calloc(V4L_req.count, sizeof(*V4L_buffers));
+    V4L_buffers = (V4L_buffer*) calloc(nbuff, sizeof(*V4L_buffers));
     struct v4l2_buffer buf;
 
-    for (size_t n_buffers = 0; n_buffers < V4L_req.count; ++n_buffers) {
+    for (size_t n_buffers = 0; n_buffers < nbuff; ++n_buffers) {
         CLEAR(buf);
 
         buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -228,7 +231,7 @@ asynStatus ADV4L::start() {
 
         //Create the corresponding NDArray
         pRaw[n_buffers] = this->pNDArrayPool->alloc(3,bufferDims, NDUInt8, buf.length, V4L_buffers[n_buffers].start);
-        if (pRaw == NULL) {
+        if (pRaw[n_buffers] == NULL) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                       "%s:%s: Error allocating NDArray buffer",
                       driverName, functionName);
@@ -237,7 +240,7 @@ asynStatus ADV4L::start() {
 
     }
 
-    for (size_t i = 0; i < V4L_req.count; ++i) {
+    for (size_t i = 0; i < nbuff; ++i) {
         CLEAR(buf);
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         buf.memory = V4L2_MEMORY_MMAP;
@@ -253,7 +256,7 @@ asynStatus ADV4L::start() {
 
     //Go!
     V4L_running = true;
-    V4L_semaphore->signal();
+    V4L_started->signal();
 
     return asynSuccess;
 }
@@ -270,16 +273,20 @@ asynStatus ADV4L::stop() {
         return asynError;
     }
 
-
-
-    V4L_semaphore->wait();
     V4L_running = false;
+    //The grabber thread wants to lock up again
+    // before stopping on the 'running' semaphore.
+    this->unlock();
+    //Wait for the graber to see V4L_running and halt
+    V4L_stopped->wait();
+    //OK, we have stopped successfully
+    this->lock();
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     xioctl(V4L_fd, VIDIOC_STREAMOFF, &type);
 
-    for (size_t i = 0; i < V4L_req.count; ++i) {
-        pRaw[i]->release();
+    for (size_t i = 0; i < nbuff; ++i) {
+        //pRaw[i]->release();
         v4l2_munmap(V4L_buffers[i].start, V4L_buffers[i].length);
     }
     free(V4L_buffers);
@@ -307,23 +314,25 @@ void ADV4L::run() {
     struct timeval     tv;
     struct v4l2_buffer buf;
 
-    while(true) {
-        // Without the usleep, the change of acquire from 1 to 0
-        // takes several seconds before it acquires the semaphore;
-        // this thread will almost always get it first.
-        usleep(1);
-        V4L_semaphore->wait();
+    epicsTimeStamp now;
+    this->lock();
 
+    while(true) {
         if (!V4L_running) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_WARNING,
-                      "%s:%s: Released but not running?...\n", driverName, functionName);
-            V4L_semaphore->signal();
-            continue;
+                      "%s:%s: Waiting for start...\n", driverName, functionName);
+
+            this->unlock();
+            V4L_started->wait();
+            this->lock();
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_WARNING,
+                      "%s:%s: Got start!...\n", driverName, functionName);
         }
 
         asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                  "%s:%s: Start grab...\n", driverName, functionName);
+                  "%s:%s: Grabbing...\n", driverName, functionName);
 
+        this->unlock();
         do {
             FD_ZERO(&fds);
             FD_SET(V4L_fd, &fds);
@@ -334,17 +343,20 @@ void ADV4L::run() {
 
             r = select(V4L_fd + 1, &fds, NULL, NULL, &tv);
         } while ((r == -1 && (errno = EINTR)));
+
+        this->lock();
         if (r == -1) {
-            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "\n");
             asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                       "%s:%s: SELECT failed.\n",
                       driverName, functionName);
-            V4L_semaphore->signal();
+            continue;
+        }
+        if(!V4L_running) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "aborted!\n");
+            V4L_stopped->signal();
             continue;
         }
         asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, "catch!\n");
-
-        //this->lock();
 
         int arrayCallbacks;
         getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
@@ -356,16 +368,13 @@ void ADV4L::run() {
         buf.memory = V4L2_MEMORY_MMAP;
         xioctl(V4L_fd, VIDIOC_DQBUF, &buf);
 
-        if (pRaw[buf.index] == NULL) {
-            asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-                      "%s:%s: where did this buffer come from?\n",
-                      driverName, functionName);
-            V4L_semaphore->signal();
-            continue;
-        }
+        epicsTimeGetCurrent(&now);
+        //pRaw[buf.index]->timeStamp = now;
+        updateTimeStamp(&(pRaw[buf.index]->epicsTS));
 
         this->pArrays[0] = pRaw[buf.index];
 
+        //Attempt at using a new buffer every time
         //size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
         //this->pArrays[0] = pNDArrayPool->alloc(3,bufferDims,NDUInt8,buf.length,NULL);
         //memcpy(this->pArrays[0]->pData, V4L_buffers[buf.index].start, buf.length);
@@ -381,6 +390,16 @@ void ADV4L::run() {
                   ((uint8_t*)(V4L_buffers[buf.index].start))[1],
                   ((uint8_t*)(V4L_buffers[buf.index].start))[2]);
 
+        NDArrayInfo_t arrayInfo;
+        int status = pRaw[buf.index]->getInfo(&arrayInfo);
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                  "%s:%s: ArrayInfo: %d %lu %d %lu %d %d %d %lu %lu %lu\n",
+                  driverName, functionName,
+                  status, arrayInfo.nElements,
+                  arrayInfo.bytesPerElement, arrayInfo.totalBytes,
+                  arrayInfo.xDim, arrayInfo.yDim, arrayInfo.colorDim,
+                  arrayInfo.xSize, arrayInfo.ySize, arrayInfo.colorSize);
+
         if(arrayCallbacks) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
                       "%s:%s: Calling imageData callback\n",
@@ -393,12 +412,8 @@ void ADV4L::run() {
 
         callParamCallbacks();
 
-        //this->unlock();
-
         //this->pArrays[0]->release();
         xioctl(V4L_fd, VIDIOC_QBUF, &buf);
-
-        V4L_semaphore->signal();
     }
 }
 

@@ -59,7 +59,8 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     #define ADV4L_FIRSTPARAM prop_V4L_deviceName
 
     //V4L buffers etc.
-    epicsEvent*                V4L_semaphore;
+    epicsEvent*                V4L_started;
+    epicsEvent*                V4L_stopped;
     bool                       V4L_running = false;
 
     int                        V4L_fd = -1;
