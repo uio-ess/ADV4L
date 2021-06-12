@@ -196,7 +196,7 @@ asynStatus ADV4L::start() {
     setIntegerParam(ADSizeX, V4L_fmt.fmt.pix.width);
     setIntegerParam(ADSizeY, V4L_fmt.fmt.pix.height);
     //TODO: Set the image type parameter in EPICS
-    size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
+    //size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
 
     //Map buffers
     CLEAR(V4L_req);
@@ -230,6 +230,7 @@ asynStatus ADV4L::start() {
         }
 
         //Create the corresponding NDArray
+        /*
         pRaw[n_buffers] = this->pNDArrayPool->alloc(3,bufferDims, NDUInt8, buf.length, V4L_buffers[n_buffers].start);
         if (pRaw[n_buffers] == NULL) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
@@ -237,6 +238,7 @@ asynStatus ADV4L::start() {
                       driverName, functionName);
             return asynError;
         }
+        */
 
     }
 
@@ -314,7 +316,7 @@ void ADV4L::run() {
     struct timeval     tv;
     struct v4l2_buffer buf;
 
-    epicsTimeStamp now;
+    //epicsTimeStamp now;
     this->lock();
 
     while(true) {
@@ -368,28 +370,54 @@ void ADV4L::run() {
         buf.memory = V4L2_MEMORY_MMAP;
         xioctl(V4L_fd, VIDIOC_DQBUF, &buf);
 
-        epicsTimeGetCurrent(&now);
-        //pRaw[buf.index]->timeStamp = now;
-        updateTimeStamp(&(pRaw[buf.index]->epicsTS));
-
-        this->pArrays[0] = pRaw[buf.index];
-
-        //Attempt at using a new buffer every time
-        //size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
-        //this->pArrays[0] = pNDArrayPool->alloc(3,bufferDims,NDUInt8,buf.length,NULL);
-        //memcpy(this->pArrays[0]->pData, V4L_buffers[buf.index].start, buf.length);
-
-        //TODO:
-        //Set pRaw->uniqueId = imageCounter and pRaw=timeStamp
-        // There may be other attributes to be set as well...
-
         asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                  "%s:%s: Data example: %02X:%02X:%02X\n",
+                  "%s:%s: Data example (V4L_buffers): %02X:%02X:%02X\n",
                   driverName, functionName,
                   ((uint8_t*)(V4L_buffers[buf.index].start))[0],
                   ((uint8_t*)(V4L_buffers[buf.index].start))[1],
                   ((uint8_t*)(V4L_buffers[buf.index].start))[2]);
 
+        //epicsTimeGetCurrent(&now);
+
+        size_t bufferDims[3] = {3, V4L_fmt.fmt.pix.width, V4L_fmt.fmt.pix.height};
+        NDArray* pRaw = pNDArrayPool->alloc(3,bufferDims,NDUInt8,buf.length,NULL);
+        memcpy(pRaw->pData,V4L_buffers[buf.index].start, buf.length);
+        //NDArray* pRaw = pNDArrayPool->alloc(3,bufferDims,NDUInt8,buf.length,V4L_buffers[buf.index].start);
+
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                  "%s:%s: Data example (pRaw):        %02X:%02X:%02X\n",
+                  driverName, functionName,
+                  ((uint8_t*)(pRaw->pData))[0],
+                  ((uint8_t*)(pRaw->pData))[1],
+                  ((uint8_t*)(pRaw->pData))[2]);
+
+        if (this->pArrays[0]) {
+            this->pArrays[0]->release();
+        }
+
+        NDDimension_t dimsOut[3];
+        pRaw->initDimension(&dimsOut[0],3);
+        pRaw->initDimension(&dimsOut[1],V4L_fmt.fmt.pix.width);
+        pRaw->initDimension(&dimsOut[2],V4L_fmt.fmt.pix.height);
+        int status = this->pNDArrayPool->convert(pRaw,
+                                                 &this->pArrays[0],
+                                                 NDUInt8,
+                                                 dimsOut);
+        if (status) {
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+                      "%s:%s: error allocating buffer in convert()\n",
+                      driverName, functionName);
+            continue;
+        }
+        NDArray* pImage = this->pArrays[0];
+
+        //TODO:
+        //Set pRaw->uniqueId = imageCounter and pRaw=timeStamp
+        // There may be other attributes to be set as well...
+        //pRaw[buf.index]->timeStamp = now;
+        //updateTimeStamp(&(pRaw[buf.index]->epicsTS));
+
+        /*
         NDArrayInfo_t arrayInfo;
         int status = pRaw[buf.index]->getInfo(&arrayInfo);
         asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
@@ -399,18 +427,28 @@ void ADV4L::run() {
                   arrayInfo.bytesPerElement, arrayInfo.totalBytes,
                   arrayInfo.xDim, arrayInfo.yDim, arrayInfo.colorDim,
                   arrayInfo.xSize, arrayInfo.ySize, arrayInfo.colorSize);
+        */
+
+        asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                  "%s:%s: Data example (pImage):      %02X:%02X:%02X\n",
+                  driverName, functionName,
+                  ((uint8_t*)(pImage->pData))[0],
+                  ((uint8_t*)(pImage->pData))[1],
+                  ((uint8_t*)(pImage->pData))[2]);
 
         if(arrayCallbacks) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
                       "%s:%s: Calling imageData callback\n",
                       driverName, functionName);
 
-            //doCallbacksGenericPointer will always return asynSuccess
-            doCallbacksGenericPointer(pRaw[buf.index], NDArrayData,0);
-            //doCallbacksGenericPointer(this->pArrays[0],NDArrayData,0);
+            //doCallbacksGenericPointer will always return asynSuccess, no need to check
+            //doCallbacksGenericPointer(pRaw,NDArrayData,0);
+            doCallbacksGenericPointer(pImage,NDArrayData,0);
         }
 
         callParamCallbacks();
+
+        pRaw->release();
 
         //this->pArrays[0]->release();
         xioctl(V4L_fd, VIDIOC_QBUF, &buf);

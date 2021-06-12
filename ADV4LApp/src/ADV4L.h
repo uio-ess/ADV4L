@@ -69,7 +69,7 @@ class ADV4L : public ADDriver, epicsThreadRunable {
 
     static const int           nbuff = 2;
     struct V4L_buffer*         V4L_buffers;
-    NDArray*                   pRaw[nbuff];
+    //NDArray*                   pRaw[nbuff];
 
  private:
     epicsThread pollingLoop;
