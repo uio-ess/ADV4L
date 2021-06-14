@@ -62,6 +62,7 @@ class ADV4L : public ADDriver, epicsThreadRunable {
     epicsEvent*                V4L_started;
     epicsEvent*                V4L_stopped;
     bool                       V4L_running = false;
+    bool                       V4L_selfStop = false;
 
     int                        V4L_fd = -1;
     struct v4l2_format         V4L_fmt;

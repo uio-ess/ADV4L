@@ -106,7 +106,6 @@ ADV4L::ADV4L(const char* portName_,
     //Set some default values
     setStringParam(prop_V4L_deviceName, V4L_deviceName);
 
-    // TODO: Put sensible things here; for now it is just copied from aravisGigE
     // setStringParam(NDDriverVersion, DRIVER_VERSION);
     // setStringParam(ADSDKVersion, ARAVIS_VERSION);
     setIntegerParam(ADReverseX, 0);
@@ -142,6 +141,7 @@ ADV4L::ADV4L(const char* portName_,
     V4L_running = false;
     V4L_started = new epicsEvent(epicsEventEmpty);
     V4L_stopped = new epicsEvent(epicsEventEmpty);
+    V4L_selfStop = false;
 
     setIntegerParam(ADStatus, ADStatusIdle);
 
@@ -271,6 +271,7 @@ asynStatus ADV4L::start() {
 
     //Go!
     V4L_running = true;
+    V4L_selfStop = false;
     V4L_started->signal();
 
     return asynSuccess;
@@ -288,14 +289,24 @@ asynStatus ADV4L::stop() {
         return asynError;
     }
 
-    V4L_running = false;
-    //The grabber thread wants to lock up again
-    // before stopping on the 'running' semaphore.
-    this->unlock();
-    //Wait for the graber to see V4L_running and halt
-    V4L_stopped->wait();
-    //OK, we have stopped successfully
-    this->lock();
+    if (!V4L_selfStop) {
+        V4L_running = false;
+        //The grabber thread wants to lock up again
+        // before stopping on the 'running' semaphore.
+        this->unlock();
+        //Wait for the graber to see V4L_running and halt
+        V4L_stopped->wait();
+        //OK, we have stopped successfully
+        this->lock();
+    }
+    else {
+        //If selfStop is true, it halted itself at the point
+        // where it is waiting for the signal to start.
+        // No need to pull the "brake handle" semaphore,
+        // just set the flags.
+        V4L_running = false;
+        V4L_selfStop = false;
+    }
     setIntegerParam(ADStatus, ADStatusIdle);
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -358,8 +369,8 @@ void ADV4L::run() {
 
             r = select(V4L_fd + 1, &fds, NULL, NULL, &tv);
         } while ((r == -1 && (errno = EINTR)));
-
         this->lock();
+
         if (r == -1) {
             asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                       "%s:%s: SELECT failed.\n",
@@ -484,6 +495,28 @@ void ADV4L::run() {
 
         //this->pArrays[0]->release();
         xioctl(V4L_fd, VIDIOC_QBUF, &buf);
+
+        //If not continious, should we halt now?
+        int imageMode;
+        getIntegerParam(ADImageMode, &imageMode);
+        if ((imageMode  == ADImageSingle) ||
+            ((imageMode == ADImageMultiple) && (numImagesCounter >= numImages))
+            ) {
+            //Flag to avoid extra loops while
+            // waiting for the ADAcquire to go through.
+            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                      "%s:%s: Stopping after %d images.\n",
+                      driverName, functionName, numImagesCounter);
+
+            V4L_selfStop = true;
+            //Trigger ::stop(), in a roundabout way.
+            setIntegerParam(ADAcquire, 0);
+            stop();
+            // Do callbacks so higher layers see any changes
+            callParamCallbacks();
+
+        }
+
     }
 }
 
