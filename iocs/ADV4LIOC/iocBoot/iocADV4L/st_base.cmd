@@ -59,15 +59,15 @@ dbLoadRecords("$(ADCORE)/db/NDStdArrays.template", "P=$(PREFIX),R=image1:,PORT=I
 #< $(ADCORE)/iocBoot/commonPlugins.cmd
 #set_requestfile_path("$(ADV4L)/ADV4LApp/Db")
 
-asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
-#asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING)
+#asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
+asynSetTraceMask("$(PORT)",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING)
 
 #asynSetTraceIOMask("FileNetCDF",0,2)
 #asynSetTraceMask("FileNetCDF",0,255)
 #asynSetTraceMask("FileNexus",0,255)
 #asynSetTraceMask("SIM2",0,255)
 
-asynSetTraceMask("Image1",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
+#asynSetTraceMask("Image1",0,ASYN_TRACE_ERROR+ASYN_TRACE_WARNING+ASYN_TRACE_FLOW+ASYN_TRACEIO_DRIVER)
 
 iocInit()
 
